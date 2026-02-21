@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Context-Aware Autonomous Emergency Escalation Agent</title>
+
+<style>
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    background: #f4f6f9;
+    display: flex;
+}
+.main { width: 70%; padding: 20px; }
+.trace-panel {
+    width: 30%;
+    background: #111;
+    color: #0f0;
+    padding: 15px;
+    height: 100vh;
+    overflow-y: auto;
+}
+.section {
+    background: white;
+    padding: 15px;
+    margin-bottom: 15px;
+    border-radius: 8px;
+}
+button {
+    padding: 8px 12px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+.primary { background: #007bff; color: white; }
+.danger { background: red; color: white; }
+.success { background: green; color: white; }
+.low { color: green; }
+.medium { color: orange; }
+.high { color: red; }
+.critical { color: darkred; }
+</style>
+
+</head>
+<body>
+
+<div class="main">
+<h2>Context-Aware Autonomous Emergency Escalation Agent</h2>
+
+<div class="section">
+<p>Current Time: <span id="currentTime"></span></p>
+<p>Location: <span id="location">Not fetched</span></p>
+<button onclick="getLocation()" class="primary">Fetch GPS</button>
+
+<hr>
+
+<label>Speed: <span id="speedValue">0</span></label><br>
+<input type="range" id="speedSlider" min="0" max="120" value="0" oninput="updateSpeed()">
+
+<br><br>
+
+<label>Battery: <span id="batteryValue">100</span></label><br>
+<input type="range" id="batterySlider" min="0" max="100" value="100" oninput="updateBattery()">
+
+<br><br>
+
+<select id="networkSelect">
+<option>Strong</option>
+<option>Weak</option>
+<option>No Internet</option>
+</select>
+
+<br><br>
+
+<button onclick="feelingUnsafe()" class="danger">Feeling Unsafe</button>
+</div>
+
+<div class="section">
+Risk Score: <span id="riskScore">0</span><br>
+Threat Level: <span id="threatLevel" class="low">Low</span>
+<br><br>
+<div style="background:#ddd;height:20px;border-radius:10px;">
+  <div id="riskBar" style="height:20px;width:0%;background:red;border-radius:10px;"></div>
+</div>
+</div>
+
+<div class="section">
+<p id="escalationStatus">No active escalation.</p>
+<button onclick="acknowledge()" class="success">Acknowledge</button>
+</div>
+<div class="section">
+<h3>Execution Plan</h3>
+<ul id="executionPlan"></ul>
+</div>
+
+</div>
+
+<div class="trace-panel">
+<h3>Reasoning Trace</h3>
+<div id="traceLog"></div>
+</div>
+
+<script>
+
+let distress = false;
+let escalationTimer = null;
+let escalationActive = false;
+
+function logTrace(msg) {
+    const log = document.getElementById("traceLog");
+    log.innerHTML += "> " + msg + "<br>";
+}
+
+function updateTime() {
+    document.getElementById("currentTime").innerText =
+        new Date().toLocaleString();
+}
+setInterval(updateTime, 1000);
+updateTime();
+
+function getLocation() {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(position => {
+            const loc = position.coords.latitude.toFixed(4) + ", " +
+                        position.coords.longitude.toFixed(4);
+            document.getElementById("location").innerText = loc;
+            logTrace("GPS fetched.");
+        });
+    }
+}
+
+function updateSpeed() {
+    document.getElementById("speedValue").innerText =
+        document.getElementById("speedSlider").value;
+}
+
+function updateBattery() {
+    document.getElementById("batteryValue").innerText =
+        document.getElementById("batterySlider").value;
+}
+
+function feelingUnsafe() {
+    distress = true;
+    logTrace("User distress added.");
+}
+
+function calculateRisk() {
+
+    let score = 0;
+
+    const speed = parseInt(document.getElementById("speedSlider").value);
+    const battery = parseInt(document.getElementById("batterySlider").value);
+    const network = document.getElementById("networkSelect").value;
+    const hour = new Date().getHours();
+
+    if (hour >= 20 || hour <= 5) score += 20;
+    if (battery < 30) score += 20;
+    if (network === "Weak") score += 15;
+    if (network === "No Internet") score += 25;
+    if (speed > 60) score += 15;
+    if (distress) score += 30;
+
+    document.getElementById("riskScore").innerText = score;
+    document.getElementById("riskBar").style.width = score + "%";
+
+    let level = "Low";
+    let cls = "low";
+
+    if (score >= 75) { level = "Critical"; cls = "critical"; }
+    else if (score >= 50) { level = "High"; cls = "high"; }
+    else if (score >= 30) { level = "Medium"; cls = "medium"; }
+
+    const levelEl = document.getElementById("threatLevel");
+    levelEl.innerText = level;
+    levelEl.className = cls;
+
+    logTrace("Risk: " + score + " | Level: " + level);
+
+    if (score >= 50 && !escalationActive) {
+        escalationActive = true;
+        const plan = document.getElementById("executionPlan");
+plan.innerHTML = `
+<li>Fetch GPS</li>
+<li>Notify Contact 1</li>
+<li>Start 20-second Timer</li>
+<li>Escalate if No Response</li>
+`;
+        document.getElementById("escalationStatus").innerText =
+            "Escalation started (20s)";
+        escalationTimer = setTimeout(() => {
+            alert("SIREN ACTIVATED");
+            logTrace("Escalated.");
+        }, 20000);
+    }
+}
+
+function acknowledge() {
+    if (escalationActive) {
+        clearTimeout(escalationTimer);
+        escalationActive = false;
+        document.getElementById("escalationStatus").innerText =
+            "Acknowledged.";
+        logTrace("Stopped escalation.");
+    }
+}
+// Auto monitor every 3 seconds
+setInterval(() => {
+    calculateRisk();
+}, 3000);
+
+</script>
+
+</body>
+</html>
