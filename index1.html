@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Autonomous Safety Agent</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+
+<style>
+body { font-family: Arial; margin: 20px; }
+#map { height: 450px; margin-bottom: 20px; }
+.section { margin-bottom: 20px; padding: 15px; background:#f4f4f4; }
+#trace { background:black; color:lime; padding:10px; height:120px; overflow:auto; }
+.bar-container { background:#ddd; height:20px; }
+#bar { background:red; height:20px; width:0%; }
+</style>
+</head>
+
+<body>
+
+<h2>Autonomous Safety Agent</h2>
+
+<div class="section">
+<button onclick="startLiveLocation()">Start Live Location</button>
+<button onclick="stopLiveLocation()">Stop Live Location</button>
+<p>Location: <span id="location">Not detected</span></p>
+</div>
+
+<div id="map"></div>
+
+<div class="section">
+Risk Score: <span id="risk">0</span>
+<div class="bar-container">
+<div id="bar"></div>
+</div>
+<p id="zoneStatus"></p>
+</div>
+
+<h3>Reasoning Trace</h3>
+<div id="trace"></div>
+
+<script>
+
+let map = L.map('map').setView([18.5204, 73.8567], 13);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+}).addTo(map);
+
+let heatLayer;
+let dangerZones = [];
+let userMarker = null;
+let watchId = null;
+let baseRisk = 10; // baseline risk
+
+function log(msg){
+    document.getElementById("trace").innerHTML += "> " + msg + "<br>";
+}
+
+// Load dynamic danger zones
+function loadDangerZones(){
+    fetch("/api/dangerzones")
+    .then(res=>res.json())
+    .then(data=>{
+        dangerZones = data;
+
+        const heatData = data.map(zone => [zone.lat, zone.lng, zone.intensity]);
+
+        heatLayer = L.heatLayer(heatData,{
+            radius: 40,
+            blur: 25,
+            maxZoom: 17
+        }).addTo(map);
+
+        log("Heatmap loaded from backend.");
+    });
+}
+
+function startLiveLocation(){
+    watchId = navigator.geolocation.watchPosition(position=>{
+
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+
+        document.getElementById("location").innerText =
+            lat.toFixed(5)+","+lng.toFixed(5);
+
+        if(userMarker){
+            userMarker.setLatLng([lat,lng]);
+        } else {
+            userMarker = L.marker([lat,lng]).addTo(map);
+        }
+
+        map.setView([lat,lng],15);
+
+        checkDangerZone(lat,lng);
+
+    }, error=>{
+        alert("Location error: "+error.message);
+    }, { enableHighAccuracy: true });
+}
+
+function stopLiveLocation(){
+    if(watchId){
+        navigator.geolocation.clearWatch(watchId);
+        log("Tracking stopped.");
+    }
+}
+
+function checkDangerZone(userLat,userLng){
+
+    let inDanger = false;
+    let extraRisk = 0;
+
+    dangerZones.forEach(zone=>{
+        const distance = getDistance(userLat,userLng,zone.lat,zone.lng);
+
+        if(distance < 300){
+            inDanger = true;
+            extraRisk += zone.intensity * 50;
+            storeVisited(zone);
+        }
+    });
+
+    const status = document.getElementById("zoneStatus");
+
+    if(inDanger){
+        status.innerText = "⚠ Inside Danger Zone";
+        status.style.color = "red";
+        log("Danger detected. Risk increased.");
+    } else {
+        status.innerText = "Safe Area";
+        status.style.color = "green";
+    }
+
+    updateRisk(extraRisk);
+}
+
+function updateRisk(extra){
+    const totalRisk = Math.min(100, baseRisk + extra);
+    document.getElementById("risk").innerText = totalRisk;
+    document.getElementById("bar").style.width = totalRisk+"%";
+}
+
+function storeVisited(zone){
+    fetch("/api/visited",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(zone)
+    });
+}
+
+function getDistance(lat1,lon1,lat2,lon2){
+    const R = 6371e3;
+    const φ1 = lat1*Math.PI/180;
+    const φ2 = lat2*Math.PI/180;
+    const Δφ = (lat2-lat1)*Math.PI/180;
+    const Δλ = (lon2-lon1)*Math.PI/180;
+
+    const a =
+        Math.sin(Δφ/2)*Math.sin(Δφ/2)+
+        Math.cos(φ1)*Math.cos(φ2)*
+        Math.sin(Δλ/2)*Math.sin(Δλ/2);
+
+    const c = 2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+    return R*c;
+}
+
+loadDangerZones();
+
+</script>
+
+</body>
+</html>
