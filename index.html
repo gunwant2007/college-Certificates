@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Context-Aware Autonomous Safety Agent</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<style>
+body { font-family: Arial; margin: 20px; }
+.section { margin-bottom: 20px; padding: 15px; background: #f4f4f4; }
+#trace { background: black; color: lime; padding: 10px; height: 150px; overflow-y: auto; }
+.bar-container { background:#ddd; height:20px; }
+#bar { background:red; height:20px; width:0%; }
+#map { height: 400px; }
+</style>
+</head>
+
+<body>
+
+<h2>Autonomous Safety Agent</h2>
+
+<div class="section">
+<p>Location: <span id="location">Not detected</span></p>
+<button onclick="sendEmergencyAlert()">🚨 Send Emergency Alert</button>
+<button onclick="startLiveLocation()">Start Live Location</button>
+<button onclick="stopLiveLocation()">Stop Live Location</button>
+
+<p>Speed: <input type="range" id="speed" min="0" max="120" value="0"></p>
+<p>Battery: <input type="range" id="battery" min="0" max="100" value="100"></p>
+
+<select id="network">
+<option>Strong</option>
+<option>Weak</option>
+<option>No Internet</option>
+</select>
+
+<button onclick="distress=true">Feeling Unsafe</button>
+</div>
+
+<div class="section">
+<h3>Live Map</h3>
+<div id="map"></div>
+<p id="zoneStatus"></p>
+</div>
+
+<div class="section">
+Risk Score: <span id="risk">0</span>
+<p id="level">Low</p>
+<div class="bar-container">
+<div id="bar"></div>
+</div>
+</div>
+
+<div class="section">
+<h3>Execution Plan</h3>
+<ul id="plan"></ul>
+</div>
+
+<h3>Reasoning Trace</h3>
+<div id="trace"></div>
+
+<script>
+
+let distress = false;
+let escalation = false;
+let watchId = null;
+let dangerZones = [];
+let userMarker = null;
+
+// Initialize Map
+let map = L.map('map').setView([18.5204, 73.8567], 13);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+}).addTo(map);
+
+// Load danger zones from backend
+function loadDangerZones(){
+    fetch("/api/dangerzones")
+    .then(res=>res.json())
+    .then(data=>{
+        dangerZones = data;
+
+        data.forEach(zone=>{
+            L.circle([zone.lat, zone.lng],{
+                color: zone.level==="High" ? "red" : "orange",
+                radius: 300
+            }).addTo(map).bindPopup("Danger: "+zone.level);
+        });
+    });
+}
+
+function log(msg){
+    document.getElementById("trace").innerHTML += "> " + msg + "<br>";
+}
+
+function startLiveLocation(){
+    if(navigator.geolocation){
+        watchId = navigator.geolocation.watchPosition(position=>{
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+
+            document.getElementById("location").innerText =
+                lat.toFixed(5)+","+lng.toFixed(5);
+
+            if(userMarker){
+                userMarker.setLatLng([lat,lng]);
+            } else {
+                userMarker = L.marker([lat,lng]).addTo(map)
+                    .bindPopup("You are here").openPopup();
+            }
+
+            map.setView([lat,lng],15);
+            checkDangerZone(lat,lng);
+        });
+    }
+}
+
+function stopLiveLocation(){
+    if(watchId){
+        navigator.geolocation.clearWatch(watchId);
+        log("Live tracking stopped.");
+    }
+}
+
+function checkDangerZone(userLat,userLng){
+    let inDanger = false;
+
+    dangerZones.forEach(zone=>{
+        const distance = getDistance(userLat,userLng,zone.lat,zone.lng);
+        if(distance < 300){
+            inDanger = true;
+        }
+    });
+
+    const status = document.getElementById("zoneStatus");
+
+    if(inDanger){
+        status.innerText = "⚠ You are in a Danger Zone!";
+        status.style.color = "red";
+        log("Danger zone detected.");
+    } else {
+        status.innerText = "Safe Area";
+        status.style.color = "green";
+    }
+}
+
+function calculateRisk(){
+    let score = 0;
+
+    const speed = parseInt(document.getElementById("speed").value);
+    const battery = parseInt(document.getElementById("battery").value);
+    const network = document.getElementById("network").value;
+
+    if(speed>60){ score+=20; log("High speed risk."); }
+    if(battery<30){ score+=20; log("Low battery risk."); }
+    if(network==="Weak"){ score+=15; }
+    if(network==="No Internet"){ score+=25; }
+    if(distress){ score+=30; }
+
+    document.getElementById("risk").innerText = score;
+    document.getElementById("bar").style.width = score+"%";
+
+    let level="Low";
+    if(score>=75) level="Critical";
+    else if(score>=50) level="High";
+    else if(score>=30) level="Medium";
+
+    document.getElementById("level").innerText=level;
+
+    if(score>=50 && !escalation){
+        escalation=true;
+        generatePlan();
+        sendToBackend(score);
+    }
+}
+
+function generatePlan(){
+    document.getElementById("plan").innerHTML=`
+    <li>Capture GPS</li>
+    <li>Notify Contact</li>
+    <li>Start Escalation Timer</li>
+    <li>Generate Incident Report</li>
+    `;
+    log("Execution plan created.");
+}
+
+function sendToBackend(score){
+    fetch("/api/incident",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+            riskScore:score,
+            location:document.getElementById("location").innerText
+        })
+    })
+    .then(res=>res.json())
+    .then(data=>{
+        log("Incident stored in backend.");
+    });
+}
+
+function getDistance(lat1,lon1,lat2,lon2){
+    const R = 6371e3;
+    const φ1 = lat1*Math.PI/180;
+    const φ2 = lat2*Math.PI/180;
+    const Δφ = (lat2-lat1)*Math.PI/180;
+    const Δλ = (lon2-lon1)*Math.PI/180;
+
+    const a =
+        Math.sin(Δφ/2)*Math.sin(Δφ/2)+
+        Math.cos(φ1)*Math.cos(φ2)*
+        Math.sin(Δλ/2)*Math.sin(Δλ/2);
+
+    const c = 2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+    return R*c;
+}
+
+setInterval(calculateRisk,3000);
+loadDangerZones();
+
+</script>
+
+</body>
+</html>
